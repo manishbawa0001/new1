@@ -1,1 +1,53 @@
+name: Build and Deploy to S3
 
+on:
+  workflow_dispatch:
+    inputs:
+      env-name:
+        description: environment name to deploy to.
+        required: true
+        type: environment
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.env-name }}
+  cancel-in-progress: true
+
+jobs:
+  upload-to-s3:
+    environment: 
+      name: ${{ inputs.env-name }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+        with:
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws-region: ${{ secrets.AWS_REGION }}
+        
+      - name: Create env file
+        run: |
+          echo REACT_APP_NODEREAL_KEY=${{  secrets.REACT_APP_NODEREAL_KEY }} > .env
+          echo REACT_APP_SDK_API_KEY=${{  secrets.REACT_APP_SDK_API_KEY }} >> .env
+          echo REACT_APP_SOLANA_QUICKNODE_SWAP=${{  secrets.REACT_APP_SOLANA_QUICKNODE_SWAP }} >> .env
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: 18
+          
+      - name: Install and Build
+        run: |
+         npm i --legacy-peer-deps
+         npm run build
+        shell: bash
+
+      - name: Deploy app build to S3 bucket
+        run: |
+          aws s3 rm s3://${{ secrets.S3_BUCKET_NAME }} --recursive
+          aws s3 cp ./build/ s3://${{ secrets.S3_BUCKET_NAME }} --recursive
+
+      - name: Invalidate cloudfront cache
+        run: |
+          aws cloudfront create-invalidation --distribution-id ${{ secrets.CF_DISTRIBUTION }} --paths "/*"
